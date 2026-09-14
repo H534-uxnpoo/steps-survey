@@ -58,6 +58,7 @@ async def scan_front_image(image: UploadFile = File(...)) -> ScanResponse:
         needsReview=(
             any(
                 getattr(fields, field_name).needsReview
+                or getattr(fields, field_name).detailNeedsReview
                 for field_name in type(fields).model_fields
             )
         ),

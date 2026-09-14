@@ -29,7 +29,7 @@
   "checkbox": {
     "inner_inset_px": 5,
     "checked_ink_ratio": 0.02,
-    "uncertain_band": 0.015,
+    "confirmed_ink_ratio": 0.06,
     "added_ink_darkness": 24
   },
   "message": {

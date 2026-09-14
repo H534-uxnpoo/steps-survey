@@ -8,6 +8,7 @@ type FieldResult = {
   value: string;
   confidence: number;
   needsReview: boolean;
+  detailNeedsReview?: boolean;
   candidates: string[];
   status: FieldStatus;
 };
@@ -75,6 +76,7 @@ function EditableResultItem({
         <input id={inputId} value={value} onChange={(event) => onChange(event.target.value)} />
       )}
       {field.status === "unavailable" && <p className="field-hint">OCRを実行できませんでした。原本を見て入力してください。</p>}
+      {field.detailNeedsReview && <p className="field-hint">選択肢は読み取れましたが、付随する自由記述は要確認です。</p>}
       {field.needsReview && <p>要確認</p>}
     </div>
   );

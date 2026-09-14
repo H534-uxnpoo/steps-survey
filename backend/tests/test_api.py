@@ -46,6 +46,7 @@ def test_scan_endpoint_returns_phase_five_fields(monkeypatch):
         "value": "DUMMY MESSAGE",
         "confidence": 0.95,
         "needsReview": False,
+        "detailNeedsReview": False,
         "candidates": [],
         "status": "recognized",
     }

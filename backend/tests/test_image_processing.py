@@ -8,6 +8,7 @@ from app.image_processing import (
     correct_document_with_diagnostics,
     correct_document,
     measure_checkboxes,
+    result_for_multiple_select,
     result_for_single_select,
 )
 from app.template import load_template_config, load_template_image
@@ -62,6 +63,25 @@ def test_checkbox_measurement_selects_only_added_ink(template_and_config):
     assert performance.status == "selected"
     assert age.value == "40代"
     assert age.status == "selected"
+
+
+def test_blank_template_checkbox_frames_are_never_selected(template_and_config):
+    template, config = template_and_config
+
+    for field_name in ("performance", "age", "trigger", "media", "reservation"):
+        readings = measure_checkboxes(
+            template,
+            template,
+            config[field_name]["options"],
+            config["checkbox"],
+        )
+        result = (
+            result_for_multiple_select(readings, config["checkbox"])
+            if config[field_name].get("multiple_select")
+            else result_for_single_select(readings, config["checkbox"])
+        )
+        assert result.status == "none"
+        assert result.candidates == []
 
 
 def test_multiple_checkbox_candidates_require_review(template_and_config):

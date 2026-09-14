@@ -9,6 +9,7 @@ class FieldResult(BaseModel):
     value: str = ""
     confidence: float = Field(ge=0, le=1)
     needsReview: bool
+    detailNeedsReview: bool = False
     candidates: list[str] = Field(default_factory=list)
     status: Literal[
         "selected", "none", "multiple", "uncertain", "recognized", "unavailable"

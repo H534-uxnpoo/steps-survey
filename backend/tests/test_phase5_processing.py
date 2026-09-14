@@ -1,7 +1,14 @@
 import cv2
 import numpy as np
 
-from app.image_processing import _validate_email, _validate_postal_code, scan_front_with_ocr
+from app.image_processing import (
+    CheckboxMeasurement,
+    _validate_email,
+    _validate_postal_code,
+    result_for_multiple_select,
+    result_for_single_select,
+    scan_front_with_ocr,
+)
 from app.models import FieldResult
 from app.ocr import OcrResult
 from app.template import load_template_config, load_template_image
@@ -96,3 +103,39 @@ def test_phase_five_ocr_fallback_keeps_checkbox_results_and_marks_text_for_revie
         getattr(fields, field_name).status == "unavailable"
         for field_name in ("message", "name", "mailingName", "postalCode", "address", "email")
     )
+
+
+def test_checkbox_reader_keeps_weak_ink_out_of_confirmed_multi_select():
+    checkbox_config = {"checked_ink_ratio": 0.02, "confirmed_ink_ratio": 0.06}
+    readings = [
+        CheckboxMeasurement("CONFIRMED", 0.30),
+        CheckboxMeasurement("WEAK", 0.028),
+        CheckboxMeasurement("EMPTY", 0),
+    ]
+
+    multiple = result_for_multiple_select(readings, checkbox_config)
+    single = result_for_single_select(
+        [CheckboxMeasurement("WEAK", 0.028), CheckboxMeasurement("EMPTY", 0)], checkbox_config
+    )
+
+    assert multiple.value == "CONFIRMED"
+    assert multiple.candidates == ["CONFIRMED"]
+    assert multiple.needsReview is True
+    assert multiple.status == "uncertain"
+    assert single.value == "WEAK"
+    assert single.status == "uncertain"
+    assert single.needsReview is True
+
+
+def test_selected_option_remains_confirmed_when_only_its_detail_ocr_is_unavailable():
+    config = load_template_config()
+    image = load_template_image().copy()
+    _mark(image, config["trigger"]["options"][2])
+    success, encoded = cv2.imencode(".png", image)
+    assert success
+
+    fields = scan_front_with_ocr(encoded.tobytes(), None)
+
+    assert fields.trigger.status == "selected"
+    assert fields.trigger.needsReview is False
+    assert fields.trigger.detailNeedsReview is True

@@ -507,21 +507,28 @@ def measure_checkboxes(
 
 
 def result_for_single_select(readings: list[CheckboxMeasurement], checkbox_config: dict) -> FieldResult:
-    threshold = float(checkbox_config["checked_ink_ratio"])
-    band = float(checkbox_config["uncertain_band"])
-    selected = [reading for reading in readings if reading.ink_ratio >= threshold]
+    possible_threshold = float(checkbox_config["checked_ink_ratio"])
+    confirmed_threshold = float(checkbox_config["confirmed_ink_ratio"])
+    selected = [reading for reading in readings if reading.ink_ratio >= confirmed_threshold]
+    possible = [
+        reading
+        for reading in readings
+        if possible_threshold <= reading.ink_ratio < confirmed_threshold
+    ]
     candidates = [reading.value for reading in selected]
-    near_threshold = any(abs(reading.ink_ratio - threshold) <= band for reading in readings)
 
     if len(selected) == 1:
         ratio = selected[0].ink_ratio
-        confidence = min(1.0, max(0.0, (ratio - threshold) / (1.0 - threshold)))
+        confidence = min(
+            1.0,
+            max(0.0, (ratio - confirmed_threshold) / (1.0 - confirmed_threshold)),
+        )
         return FieldResult(
             value=selected[0].value,
             confidence=confidence,
-            needsReview=near_threshold,
+            needsReview=bool(possible),
             candidates=candidates,
-            status="uncertain" if near_threshold else "selected",
+            status="uncertain" if possible else "selected",
         )
     if len(selected) > 1:
         return FieldResult(
@@ -530,6 +537,14 @@ def result_for_single_select(readings: list[CheckboxMeasurement], checkbox_confi
             candidates=candidates,
             status="multiple",
         )
+    if possible:
+        return FieldResult(
+            value=possible[0].value if len(possible) == 1 else "",
+            confidence=0,
+            needsReview=True,
+            candidates=[reading.value for reading in possible],
+            status="uncertain",
+        )
     return FieldResult(confidence=0, needsReview=True, candidates=[], status="none")
 
 
@@ -537,23 +552,41 @@ def result_for_multiple_select(
     readings: list[CheckboxMeasurement], checkbox_config: dict
 ) -> FieldResult:
     """Return all checked choices; ambiguity applies only near the threshold."""
-    threshold = float(checkbox_config["checked_ink_ratio"])
-    band = float(checkbox_config["uncertain_band"])
-    selected = [reading for reading in readings if reading.ink_ratio >= threshold]
+    possible_threshold = float(checkbox_config["checked_ink_ratio"])
+    confirmed_threshold = float(checkbox_config["confirmed_ink_ratio"])
+    selected = [reading for reading in readings if reading.ink_ratio >= confirmed_threshold]
+    possible = [
+        reading
+        for reading in readings
+        if possible_threshold <= reading.ink_ratio < confirmed_threshold
+    ]
     candidates = [reading.value for reading in selected]
-    near_threshold = any(abs(reading.ink_ratio - threshold) <= band for reading in readings)
     if not selected:
+        if possible:
+            return FieldResult(
+                value=", ".join(reading.value for reading in possible),
+                confidence=0,
+                needsReview=True,
+                candidates=[reading.value for reading in possible],
+                status="uncertain",
+            )
         return FieldResult(confidence=0, needsReview=True, candidates=[], status="none")
     confidence = min(
         1.0,
-        max(0.0, min((reading.ink_ratio - threshold) / (1.0 - threshold) for reading in selected)),
+        max(
+            0.0,
+            min(
+                (reading.ink_ratio - confirmed_threshold) / (1.0 - confirmed_threshold)
+                for reading in selected
+            ),
+        ),
     )
     return FieldResult(
         value=", ".join(candidates),
         confidence=confidence,
-        needsReview=near_threshold,
+        needsReview=bool(possible),
         candidates=candidates,
-        status="uncertain" if near_threshold else "selected",
+        status="uncertain" if possible else "selected",
     )
 
 
@@ -572,6 +605,7 @@ def _with_selected_details(
 
     values: list[str] = []
     needs_review = selection.needsReview
+    detail_needs_review = False
     confidence = selection.confidence
     selected = set(selection.candidates)
     for option in options:
@@ -581,8 +615,9 @@ def _with_selected_details(
         detail_key = option.get("detail_field")
         detail = detail_results.get(str(detail_key)) if detail_key else None
         if detail is not None:
-            needs_review = needs_review or detail.needsReview
-            confidence = min(confidence, detail.confidence)
+            detail_needs_review = detail_needs_review or detail.needsReview
+            if detail.value:
+                confidence = min(confidence, detail.confidence)
             if detail.value:
                 value = f"{value}（{detail.value}）"
         values.append(value)
@@ -591,6 +626,7 @@ def _with_selected_details(
         value=", ".join(values),
         confidence=confidence,
         needsReview=needs_review,
+        detailNeedsReview=detail_needs_review,
         candidates=values,
         status="uncertain" if needs_review and selection.status == "selected" else selection.status,
     )
