@@ -1,0 +1,102 @@
+{
+  "reference": {
+    "render_scale": 2.0,
+    "width": 1191,
+    "height": 1684
+  },
+  "document_detection": {
+    "minimum_area_ratio": 0.2,
+    "aspect_ratio_tolerance": 0.16
+  },
+  "fine_alignment": {
+    "enabled": true,
+    "maximum_translation_px": 8,
+    "minimum_correlation": 0.55
+  },
+  "template_alignment": {
+    "minimum_inliers": 16,
+    "minimum_inlier_ratio": 0.45,
+    "minimum_x_span_ratio": 0.65,
+    "minimum_y_span_ratio": 0.35,
+    "maximum_projected_margin_ratio": 0.3
+  },
+  "alignment_quality": {
+    "checkbox_frame_margin_px": 3,
+    "checkbox_frame_search_px": 8,
+    "minimum_mean_score": 0.6,
+    "minimum_min_score": 0.2
+  },
+  "checkbox": {
+    "inner_inset_px": 5,
+    "checked_ink_ratio": 0.02,
+    "uncertain_band": 0.015,
+    "added_ink_darkness": 24
+  },
+  "message": {
+    "roi": [145, 1067, 896, 292],
+    "minimum_confidence": 0.8
+  },
+  "name": { "roi": [143, 488, 270, 42], "minimum_confidence": 0.8 },
+  "mailing_name": { "roi": [212, 1403, 275, 34], "minimum_confidence": 0.8 },
+  "postal_code": { "roi": [218, 1438, 250, 34], "minimum_confidence": 0.8 },
+  "address": { "roi": [198, 1464, 820, 32], "minimum_confidence": 0.8 },
+  "email": { "roi": [282, 1506, 734, 32], "minimum_confidence": 0.9 },
+  "trigger_related_name": { "roi": [700, 681, 315, 30], "minimum_confidence": 0.8 },
+  "trigger_other": { "roi": [708, 717, 315, 30], "minimum_confidence": 0.8 },
+  "media_other": { "roi": [235, 841, 315, 30], "minimum_confidence": 0.8 },
+  "reservation_other": { "roi": [504, 929, 510, 30], "minimum_confidence": 0.8 },
+  "performance": {
+    "single_select": true,
+    "options": [
+      { "value": "12日(土)12:30-", "box": [143, 409, 16, 16] },
+      { "value": "12日(土)17:30-", "box": [303, 409, 16, 16] },
+      { "value": "13日(日)12:30-", "box": [463, 409, 16, 16] }
+    ]
+  },
+  "age": {
+    "single_select": true,
+    "options": [
+      { "value": "10代以下", "box": [143, 601, 16, 16] },
+      { "value": "20代", "box": [258, 601, 16, 16] },
+      { "value": "30代", "box": [336, 601, 16, 16] },
+      { "value": "40代", "box": [415, 601, 16, 16] },
+      { "value": "50代", "box": [493, 601, 16, 16] },
+      { "value": "60代以上", "box": [572, 601, 16, 16] }
+    ]
+  },
+  "trigger": {
+    "multiple_select": true,
+    "options": [
+      { "value": "関係者親族", "box": [143, 689, 16, 16] },
+      { "value": "STEPSのOB・OG", "box": [269, 689, 16, 16] },
+      { "value": "関係者の誘い", "box": [465, 689, 16, 16], "detail_field": "trigger_related_name" },
+      { "value": "慶應生", "box": [143, 725, 16, 16] },
+      { "value": "劇協", "box": [233, 725, 16, 16] },
+      { "value": "SNSをみて", "box": [305, 725, 16, 16] },
+      { "value": "置きチラシをみて", "box": [437, 725, 16, 16] },
+      { "value": "その他", "box": [617, 725, 16, 16], "detail_field": "trigger_other" }
+    ]
+  },
+  "media": {
+    "multiple_select": true,
+    "options": [
+      { "value": "X", "box": [143, 813, 16, 16] },
+      { "value": "Instagram", "box": [192, 813, 16, 16] },
+      { "value": "Facebook", "box": [315, 813, 16, 16] },
+      { "value": "ホームページ", "box": [429, 813, 16, 16] },
+      { "value": "PV", "box": [573, 813, 16, 16] },
+      { "value": "DM", "box": [634, 813, 16, 16] },
+      { "value": "公演チラシ", "box": [701, 813, 16, 16] },
+      { "value": "ブログ", "box": [827, 813, 16, 16] },
+      { "value": "その他", "box": [143, 849, 16, 16], "detail_field": "media_other" }
+    ]
+  },
+  "reservation": {
+    "single_select": true,
+    "options": [
+      { "value": "できた", "box": [143, 937, 16, 16] },
+      { "value": "わかりにくかった", "box": [233, 937, 16, 16] },
+      { "value": "その他", "box": [413, 937, 16, 16], "detail_field": "reservation_other" }
+    ]
+  }
+}
