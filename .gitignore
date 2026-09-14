@@ -1,0 +1,10 @@
+.env
+.env.*
+node_modules/
+.next/
+__pycache__/
+.venv/
+venv/
+test-data/private/
+*.pem
+*service-account*.json
