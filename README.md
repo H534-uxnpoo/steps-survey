@@ -1,8 +1,8 @@
 # STEPS Survey Scanner
 
-Phase 1〜3の縦スライスです。ブラウザからJPEG/PNGのアンケート画像を1枚アップロードし、FastAPI/OpenCVで用紙を補正して、公演回と年齢のチェックボックスを表示します。
+Phase 1〜6、8を含むアンケート読取・確認画面と、Phase 7のGoogle Sheets登録準備を実装しています。ブラウザからJPEG/PNGを1枚処理し、確認・修正した11項目だけをBackend経由で1行追加できます。
 
-この段階ではOCR、Google Sheets、裏面、他の設問、登録・編集画面は実装しません。アップロード画像は永続保存しません。
+登録はユーザーが内容を確認して明示的に操作した場合だけ行います。アップロード画像、crop画像、OCR本文、登録データはローカルへ永続保存しません。
 
 ## 起動
 
@@ -63,3 +63,23 @@ $env:VISION_OCR_ENABLED = "true"
 $env:RUN_VISION_INTEGRATION = "1"
 .venv\Scripts\python.exe -m pytest -m integration backend\tests\integration -q
 ```
+
+## Phase 7: Google Sheets登録
+
+Google Sheets登録はBackendだけが行います。FrontendへSpreadsheet IDやGoogle認証情報を設定しないでください。
+
+認証未設定時の既定値は `SHEETS_ENABLED=false` で、登録APIは `sheets_unavailable` を返し、成功表示や代替ファイル保存は行いません。
+
+設定例（Backendプロセスの環境変数）:
+
+```powershell
+$env:SHEETS_ENABLED = "true"
+$env:SHEETS_SPREADSHEET_ID = "your-spreadsheet-id"
+$env:SHEETS_RANGE = "アンケート!A:K"
+gcloud auth application-default login
+.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
+```
+
+Cloud Runでは、Sheets API権限を持つ実行サービスアカウントを割り当てます。`GOOGLE_APPLICATION_CREDENTIALS` を使う場合も、JSON鍵はリポジトリ外に置きます。
+
+対象シートの `A1:K1` が固定ヘッダーと一致しない場合は登録を中止します。APIは `values.append`、`valueInputOption=RAW`、`insertDataOption=INSERT_ROWS` を使用します。

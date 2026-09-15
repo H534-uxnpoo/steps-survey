@@ -35,6 +35,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 
 type FieldKey = keyof ScanResult["fields"];
 
+type SubmissionFields = Record<FieldKey, string>;
+
 type FieldDefinition = {
   key: FieldKey;
   label: string;
@@ -54,6 +56,37 @@ const fieldDefinitions: FieldDefinition[] = [
   { key: "address", label: "住所", multiline: true },
   { key: "email", label: "メアド" },
 ];
+
+function responseErrorCode(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+
+  const response = body as Record<string, unknown>;
+  if (typeof response.code === "string") return response.code;
+
+  if (response.detail && typeof response.detail === "object") {
+    const detail = response.detail as Record<string, unknown>;
+    if (typeof detail.code === "string") return detail.code;
+  }
+
+  return typeof response.detail === "string" ? response.detail : null;
+}
+
+function submissionErrorFor(body: unknown): string {
+  switch (responseErrorCode(body)) {
+    case "sheets_unavailable":
+      return "Google Sheetsへの保存設定がまだ完了していません。";
+    case "sheet_header_mismatch":
+      return "スプレッドシートのヘッダーを確認できませんでした。登録は行っていません。";
+    case "sheets_authentication_failed":
+    case "sheets_auth_unavailable":
+      return "Google Sheetsへの認証設定を確認してください。登録は行っていません。";
+    case "submission_validation_error":
+    case "validation_error":
+      return "入力内容を確認してください。登録は行っていません。";
+    default:
+      return "Google Sheetsへ登録できませんでした。内容はこの画面に保持されています。時間をおいて再度お試しください。";
+  }
+}
 
 function EditableResultItem({
   definition,
@@ -92,6 +125,10 @@ export default function Home() {
   const [editedValues, setEditedValues] = useState<Partial<Record<FieldKey, string>>>({});
   const [cameraOpen, setCameraOpen] = useState(false);
   const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
+  const [hasConfirmedSubmission, setHasConfirmedSubmission] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionSucceeded, setSubmissionSucceeded] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
 
   function stopCamera() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -120,6 +157,19 @@ export default function Home() {
     }
     setErrorMessage("");
     setPreview({ file, url: URL.createObjectURL(file) });
+  }
+
+  function resetForNextSurvey() {
+    stopCamera();
+    setResult(null);
+    setEditedValues({});
+    setPreview(null);
+    setErrorMessage("");
+    setHasConfirmedSubmission(false);
+    setIsSubmitting(false);
+    setSubmissionSucceeded(false);
+    setSubmissionError("");
+    if (inputRef.current) inputRef.current.value = "";
   }
 
   async function startCamera() {
@@ -169,6 +219,10 @@ export default function Home() {
     setErrorMessage("");
     setResult(null);
     setEditedValues({});
+    setHasConfirmedSubmission(false);
+    setIsSubmitting(false);
+    setSubmissionSucceeded(false);
+    setSubmissionError("");
     const formData = new FormData();
     formData.append("image", file);
 
@@ -202,6 +256,37 @@ export default function Home() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  async function submitConfirmedValues() {
+    if (!result || !hasConfirmedSubmission || isSubmitting || submissionSucceeded) return;
+
+    const fields = Object.fromEntries(
+      fieldDefinitions.map(({ key }) => [key, editedValues[key] ?? ""])
+    ) as SubmissionFields;
+
+    setIsSubmitting(true);
+    setSubmissionError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/submissions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+      const body = await response.json().catch(() => null);
+
+      if (!response.ok || body?.success !== true) {
+        setSubmissionError(submissionErrorFor(body));
+        return;
+      }
+
+      setSubmissionSucceeded(true);
+    } catch {
+      setSubmissionError("サーバーに接続できません。内容はこの画面に保持されています。接続を確認して再度お試しください。");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <main>
       <section className="card">
@@ -217,7 +302,7 @@ export default function Home() {
           onChange={onFileChange}
           disabled={isScanning || cameraOpen}
         />
-        {!preview && !cameraOpen && (
+        {!result && !preview && !cameraOpen && (
           <div className="source-actions">
             <button type="button" onClick={() => void startCamera()} disabled={isScanning}>カメラを起動</button>
             <button type="button" className="secondary-button" onClick={() => inputRef.current?.click()} disabled={isScanning}>写真から選択</button>
@@ -247,23 +332,55 @@ export default function Home() {
 
       {result && (
         <section className="card results" aria-live="polite">
-          <h2>確認・修正</h2>
-          {result.needsReview && <p className="review-summary">要確認の項目を先頭に表示しています。原本を見て修正してください。</p>}
-          <div className="edit-list">
-            {[...fieldDefinitions]
-              .sort((left, right) => Number(result.fields[right.key].needsReview) - Number(result.fields[left.key].needsReview))
-              .map((definition) => (
-                <EditableResultItem
-                  key={definition.key}
-                  definition={definition}
-                  field={result.fields[definition.key]}
-                  value={editedValues[definition.key] ?? ""}
-                  onChange={(value) => setEditedValues((current) => ({ ...current, [definition.key]: value }))}
+          {submissionSucceeded ? (
+            <div className="submission-success">
+              <h2>登録しました</h2>
+              <p>Google Sheetsへ1件を登録しました。</p>
+              <button type="button" onClick={resetForNextSurvey}>次のアンケートを読み取る</button>
+            </div>
+          ) : (
+            <>
+              <h2>確認・修正</h2>
+              {result.needsReview && <p className="review-summary">要確認の項目を先頭に表示しています。原本を見て修正してください。</p>}
+              <div className="edit-list">
+                {[...fieldDefinitions]
+                  .sort((left, right) => Number(result.fields[right.key].needsReview) - Number(result.fields[left.key].needsReview))
+                  .map((definition) => (
+                    <EditableResultItem
+                      key={definition.key}
+                      definition={definition}
+                      field={result.fields[definition.key]}
+                      value={editedValues[definition.key] ?? ""}
+                      onChange={(value) => {
+                        setEditedValues((current) => ({ ...current, [definition.key]: value }));
+                        setHasConfirmedSubmission(false);
+                        setSubmissionError("");
+                      }}
+                    />
+                  ))}
+              </div>
+              <p className="local-only">修正内容はこの画面内でのみ保持されます。内容を確認してから、下の操作でGoogle Sheetsへ登録してください。</p>
+              {result.needsReview && <p className="review-summary">要確認の項目が残っています。原本を確認したうえで登録してください。</p>}
+              <label className="submission-confirmation">
+                <input
+                  type="checkbox"
+                  checked={hasConfirmedSubmission}
+                  disabled={isSubmitting}
+                  onChange={(event) => setHasConfirmedSubmission(event.target.checked)}
                 />
-              ))}
-          </div>
-          <p className="local-only">修正内容はこの画面内でのみ保持されます。Google Sheetsへの登録はまだ行いません。</p>
-          <button type="button" onClick={() => { setResult(null); setEditedValues({}); setErrorMessage(""); }}>次のアンケートを読み取る</button>
+                内容を確認しました
+              </label>
+              <p className="submission-hint">確認後にのみ登録できます。登録されるのは、この画面で編集した11項目です。</p>
+              {submissionError && <p className="error" role="alert">{submissionError}</p>}
+              <button
+                type="button"
+                onClick={() => void submitConfirmedValues()}
+                disabled={!hasConfirmedSubmission || isSubmitting}
+              >
+                {isSubmitting ? "登録中…" : "スプレッドシートに登録"}
+              </button>
+            </>
+          )}
         </section>
       )}
     </main>

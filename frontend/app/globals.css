@@ -28,3 +28,10 @@ h2 { font-size: 1.25rem; }
 .edit-field p { margin: 8px 0 0; color: #9a5900; font-size: .9rem; font-weight: 700; }
 .edit-field .field-hint { color: #59645e; font-weight: 400; }
 .local-only { margin: 18px 0; color: #59645e; font-size: .9rem; line-height: 1.5; }
+.submission-confirmation { display: flex; gap: 10px; align-items: center; margin: 18px 0 0; padding: 14px 12px; border: 1px solid #b9c6be; border-radius: 8px; color: #172026; font-weight: 700; }
+.submission-confirmation input { width: 20px; height: 20px; accent-color: #156b45; }
+.submission-hint { margin: 10px 0 16px; color: #59645e; font-size: .9rem; line-height: 1.5; }
+.submission-success { display: grid; gap: 14px; }
+.submission-success p { margin: 0; line-height: 1.6; }
+button:disabled { background: #82968b; cursor: not-allowed; }
+.secondary-button:disabled { border-color: #82968b; background: #f4f7f5; color: #59645e; }

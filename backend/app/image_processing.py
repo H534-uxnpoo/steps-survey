@@ -48,6 +48,16 @@ class TemplateFeatureAttempt:
     diagnostics: dict[str, float | int | str | bool]
 
 
+@dataclass(frozen=True)
+class PaperContourCandidate:
+    """A geometry-only document-corner candidate discovered from an edge map."""
+
+    corners: np.ndarray
+    score: float
+    area_ratio: float
+    edge_strategy: str
+
+
 def decode_image(image_bytes: bytes) -> np.ndarray:
     encoded = np.frombuffer(image_bytes, dtype=np.uint8)
     image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
@@ -76,40 +86,130 @@ def _quad_aspect_ratio(corners: np.ndarray) -> float:
     return min(top, left) / max(top, left)
 
 
-def find_document_corners(image: np.ndarray, config: dict) -> np.ndarray:
-    """Return the largest plausible A-series paper quadrilateral."""
-    height, width = image.shape[:2]
-    image_area = height * width
-    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+def _document_edge_strategies(config: dict) -> tuple[str, ...]:
+    configured = config["document_detection"].get(
+        "edge_strategies", ["canny"]
+    )
+    strategies = tuple(str(strategy) for strategy in configured)
+    return strategies or ("canny",)
+
+
+def _document_edges(
+    grayscale: np.ndarray, config: dict, edge_strategy: str
+) -> np.ndarray:
+    """Build an edge map without inspecting or retaining form contents."""
+    detection = config["document_detection"]
+    if edge_strategy == "clahe_canny":
+        tile_size = int(detection.get("clahe_tile_grid_size", 8))
+        grayscale = cv2.createCLAHE(
+            clipLimit=float(detection.get("clahe_clip_limit", 2.0)),
+            tileGridSize=(tile_size, tile_size),
+        ).apply(grayscale)
+        low = int(detection.get("clahe_canny_low_threshold", 40))
+        high = int(detection.get("clahe_canny_high_threshold", 120))
+    elif edge_strategy == "canny":
+        low = int(detection.get("canny_low_threshold", 45))
+        high = int(detection.get("canny_high_threshold", 135))
+    else:
+        raise ValueError(f"Unsupported document edge strategy: {edge_strategy}")
+
     blurred = cv2.GaussianBlur(grayscale, (5, 5), 0)
-    edges = cv2.Canny(blurred, 45, 135)
+    edges = cv2.Canny(blurred, low, high)
     edges = cv2.morphologyEx(
         edges, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8), iterations=2
     )
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    return edges
+
+
+def _paper_contour_candidates(
+    image: np.ndarray,
+    config: dict,
+    *,
+    edge_strategy: str,
+) -> tuple[list[PaperContourCandidate], dict[str, float | int | str | bool]]:
+    """Find strict A-series quadrilaterals and non-PII discovery metrics."""
+    height, width = image.shape[:2]
+    image_area = height * width
+    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    contours, _ = cv2.findContours(
+        _document_edges(grayscale, config, edge_strategy),
+        cv2.RETR_LIST,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
 
     expected_aspect = config["reference"]["width"] / config["reference"]["height"]
     tolerance = config["document_detection"]["aspect_ratio_tolerance"]
     minimum_area = config["document_detection"]["minimum_area_ratio"] * image_area
-    candidates: list[tuple[float, np.ndarray]] = []
+    candidates: list[PaperContourCandidate] = []
+    quadrilateral_count = 0
+    area_qualified_count = 0
+    aspect_qualified_count = 0
+    largest_quadrilateral_area_ratio = 0.0
 
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < minimum_area:
-            continue
         perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            continue
         approximation = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
         if len(approximation) != 4 or not cv2.isContourConvex(approximation):
             continue
+        quadrilateral_count += 1
+        area_ratio = area / image_area
+        largest_quadrilateral_area_ratio = max(
+            largest_quadrilateral_area_ratio, area_ratio
+        )
+        if area < minimum_area:
+            continue
+        area_qualified_count += 1
         corners = _order_corners(approximation.reshape(4, 2))
         aspect = _quad_aspect_ratio(corners)
         if abs(aspect - expected_aspect) > tolerance:
             continue
+        aspect_qualified_count += 1
         aspect_score = 1 - abs(aspect - expected_aspect) / tolerance
-        candidates.append((area * aspect_score, corners))
+        candidates.append(
+            PaperContourCandidate(
+                corners=corners,
+                score=float(area * aspect_score),
+                area_ratio=float(area_ratio),
+                edge_strategy=edge_strategy,
+            )
+        )
 
-    if candidates:
-        return max(candidates, key=lambda candidate: candidate[0])[1]
+    return candidates, {
+        "edgeStrategy": edge_strategy,
+        "contourCount": len(contours),
+        "quadrilateralCount": quadrilateral_count,
+        "areaQualifiedCount": area_qualified_count,
+        "aspectQualifiedCount": aspect_qualified_count,
+        "largestQuadrilateralAreaRatio": round(largest_quadrilateral_area_ratio, 4),
+        "candidateQualityPassed": bool(candidates),
+    }
+
+
+def _best_paper_contour_candidate(
+    image: np.ndarray, config: dict
+) -> PaperContourCandidate | None:
+    """Prefer the historical Canny path; use contrast-normalized edges only as fallback."""
+    for edge_strategy in _document_edge_strategies(config):
+        candidates, _ = _paper_contour_candidates(
+            image, config, edge_strategy=edge_strategy
+        )
+        if candidates:
+            return max(candidates, key=lambda candidate: candidate.score)
+    return None
+
+
+def find_document_corners(image: np.ndarray, config: dict) -> np.ndarray:
+    """Return the largest plausible A-series paper quadrilateral."""
+    height, width = image.shape[:2]
+    expected_aspect = config["reference"]["width"] / config["reference"]["height"]
+    tolerance = config["document_detection"]["aspect_ratio_tolerance"]
+    candidate = _best_paper_contour_candidate(image, config)
+
+    if candidate is not None:
+        return candidate.corners
 
     # A tightly cropped scan has no visible external edge.  Its full image is a
     # safe fallback only when it already has the questionnaire's aspect ratio.
@@ -148,15 +248,39 @@ def _choose_upright_orientation(warped: np.ndarray, template: np.ndarray) -> np.
     return max(candidates, key=lambda candidate: _orientation_score(candidate, template))
 
 
-def _align_with_template_features(
-    image: np.ndarray, template: np.ndarray, config: dict
+def _feature_preprocessed_grayscale(
+    grayscale: np.ndarray, config: dict, preprocessing: str
+) -> np.ndarray:
+    """Normalize illumination for keypoint discovery only; warp the original image."""
+    if preprocessing == "raw":
+        return grayscale
+    if preprocessing == "clahe":
+        alignment = config["template_alignment"]
+        tile_size = int(alignment.get("clahe_tile_grid_size", 8))
+        return cv2.createCLAHE(
+            clipLimit=float(alignment.get("clahe_clip_limit", 2.0)),
+            tileGridSize=(tile_size, tile_size),
+        ).apply(grayscale)
+    raise ValueError(f"Unsupported feature preprocessing: {preprocessing}")
+
+
+def _align_with_template_features_once(
+    image: np.ndarray,
+    template: np.ndarray,
+    config: dict,
+    *,
+    preprocessing: str,
 ) -> TemplateFeatureAttempt:
     """Align a borderless scan using printed form features (not handwriting)."""
     if not hasattr(cv2, "SIFT_create"):
         return TemplateFeatureAttempt(None, "feature_unavailable", {})
 
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    template_gray = _feature_preprocessed_grayscale(
+        cv2.cvtColor(template, cv2.COLOR_BGR2GRAY), config, preprocessing
+    )
+    image_gray = _feature_preprocessed_grayscale(
+        cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), config, preprocessing
+    )
     detector = cv2.SIFT_create()
     template_keypoints, template_descriptors = detector.detectAndCompute(template_gray, None)
     image_keypoints, image_descriptors = detector.detectAndCompute(image_gray, None)
@@ -258,6 +382,57 @@ def _align_with_template_features(
     )
 
 
+def _align_with_template_features(
+    image: np.ndarray, template: np.ndarray, config: dict
+) -> TemplateFeatureAttempt:
+    """Try contrast-safe keypoint discovery variants without lowering acceptance gates."""
+    configured = config["template_alignment"].get(
+        "feature_preprocessing", ["raw"]
+    )
+    strategies = tuple(str(strategy) for strategy in configured) or ("raw",)
+    attempts: list[TemplateFeatureAttempt] = []
+
+    for preprocessing in strategies:
+        attempt = _align_with_template_features_once(
+            image, template, config, preprocessing=preprocessing
+        )
+        attempt = TemplateFeatureAttempt(
+            attempt.aligned_image,
+            attempt.code,
+            {"featurePreprocessing": preprocessing, **attempt.diagnostics},
+        )
+        attempts.append(attempt)
+        # Preserve the historical raw path when it satisfies every existing
+        # geometry gate.  CLAHE is a fallback for illumination-limited scans.
+        if attempt.aligned_image is not None:
+            return attempt
+
+    primary = attempts[0]
+    if len(attempts) == 1:
+        return primary
+
+    alternatives = attempts[1:]
+    best_alternative = max(
+        alternatives,
+        key=lambda attempt: int(attempt.diagnostics.get("featureInliers", 0)),
+    )
+    return TemplateFeatureAttempt(
+        None,
+        primary.code,
+        {
+            **primary.diagnostics,
+            "featurePreprocessingTried": ",".join(strategies),
+            "featureAlternativeCode": best_alternative.code,
+            "featureAlternativeGoodMatches": int(
+                best_alternative.diagnostics.get("featureGoodMatches", 0)
+            ),
+            "featureAlternativeInliers": int(
+                best_alternative.diagnostics.get("featureInliers", 0)
+            ),
+        },
+    )
+
+
 def _fine_align(image: np.ndarray, template: np.ndarray, config: dict) -> np.ndarray:
     alignment = config["fine_alignment"]
     if not alignment["enabled"]:
@@ -299,64 +474,129 @@ def _fine_align(image: np.ndarray, template: np.ndarray, config: dict) -> np.nda
 
 def _paper_contour_diagnostics(image: np.ndarray, config: dict) -> dict[str, float | int | str | bool]:
     """Return geometry-only paper detection diagnostics; never image contents."""
-    height, width = image.shape[:2]
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 135)
-    edges = cv2.morphologyEx(
-        edges, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8), iterations=2
+    strategy_results = [
+        _paper_contour_candidates(image, config, edge_strategy=edge_strategy)
+        for edge_strategy in _document_edge_strategies(config)
+    ]
+    candidates_by_strategy = [result[0] for result in strategy_results]
+    metrics_by_strategy = [result[1] for result in strategy_results]
+    largest_metrics = max(
+        metrics_by_strategy,
+        key=lambda metrics: float(metrics["largestQuadrilateralAreaRatio"]),
     )
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    quadrilateral_areas: list[float] = []
-    for contour in contours:
-        approximation = cv2.approxPolyDP(
-            contour, 0.02 * cv2.arcLength(contour, True), True
-        )
-        if len(approximation) == 4 and cv2.isContourConvex(approximation):
-            quadrilateral_areas.append(cv2.contourArea(contour) / (width * height))
-
-    largest_area = max(quadrilateral_areas, default=0.0)
+    selected_candidate = next(
+        (candidate for candidates in candidates_by_strategy for candidate in candidates),
+        None,
+    )
+    largest_area = float(largest_metrics["largestQuadrilateralAreaRatio"])
     minimum_area = float(config["document_detection"]["minimum_area_ratio"])
+    quadrilateral_count = max(
+        int(metrics["quadrilateralCount"]) for metrics in metrics_by_strategy
+    )
+    if quadrilateral_count == 0:
+        paper_code = "paper_contour_candidate_missing"
+    elif largest_area < minimum_area:
+        paper_code = "paper_contour_too_small"
+    elif selected_candidate is None:
+        paper_code = "paper_contour_geometry_rejected"
+    else:
+        paper_code = "paper_contour_detected"
+
     return {
-        "paperContourCode": "paper_contour_detected"
-        if largest_area >= minimum_area
-        else "paper_contour_too_small",
-        "paperQuadrilateralCount": len(quadrilateral_areas),
+        "paperContourCode": paper_code,
+        "paperEdgeStrategiesTried": ",".join(_document_edge_strategies(config)),
+        "paperEdgeStrategyWithLargestQuadrilateral": str(
+            largest_metrics["edgeStrategy"]
+        ),
+        "paperSelectedEdgeStrategy": selected_candidate.edge_strategy
+        if selected_candidate is not None
+        else "none",
+        "paperContourCount": max(
+            int(metrics["contourCount"]) for metrics in metrics_by_strategy
+        ),
+        "paperQuadrilateralCount": quadrilateral_count,
+        "paperAreaQualifiedCount": max(
+            int(metrics["areaQualifiedCount"]) for metrics in metrics_by_strategy
+        ),
+        "paperAspectQualifiedCount": max(
+            int(metrics["aspectQualifiedCount"]) for metrics in metrics_by_strategy
+        ),
         "paperLargestAreaRatio": round(float(largest_area), 4),
         "paperMinimumAreaRatio": minimum_area,
     }
 
 
-def _checkbox_frame_quality(
-    aligned_image: np.ndarray, template: np.ndarray, config: dict
-) -> dict[str, float | int | bool]:
-    """Compare only printed checkbox frames after correction, not answer content."""
-    quality_config = config["alignment_quality"]
-    margin = int(quality_config["checkbox_frame_margin_px"])
-    search = int(quality_config["checkbox_frame_search_px"])
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    scan_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
+def _checkbox_frame_scores(
+    scan_gray: np.ndarray,
+    template_gray: np.ndarray,
+    options: Iterable[dict],
+    *,
+    margin: int,
+    search: int,
+) -> tuple[list[float], list[tuple[float, float]]]:
+    """Measure only printed-frame alignment; scores never contain OCR or form text."""
     scores: list[float] = []
     shifts: list[tuple[float, float]] = []
-    options = config["performance"]["options"] + config["age"]["options"]
-
     for option in options:
         x, y, width, height = option["box"]
-        patch = template_gray[y - margin : y + height + margin, x - margin : x + width + margin]
+        patch = template_gray[
+            y - margin : y + height + margin,
+            x - margin : x + width + margin,
+        ]
         search_area = scan_gray[
             y - margin - search : y + height + margin + search,
             x - margin - search : x + width + margin + search,
         ]
-        if patch.size == 0 or search_area.shape[0] < patch.shape[0] or search_area.shape[1] < patch.shape[1]:
+        if (
+            patch.size == 0
+            or search_area.shape[0] < patch.shape[0]
+            or search_area.shape[1] < patch.shape[1]
+        ):
             scores.append(-1.0)
             continue
         match = cv2.matchTemplate(search_area, patch, cv2.TM_CCOEFF_NORMED)
         _, score, _, location = cv2.minMaxLoc(match)
         scores.append(float(score))
         shifts.append((float(location[0] - search), float(location[1] - search)))
+    return scores, shifts
+
+
+def _checkbox_frame_quality(
+    aligned_image: np.ndarray, template: np.ndarray, config: dict
+) -> dict[str, float | int | bool]:
+    """Compare printed checkbox frames after correction, not answer content."""
+    quality_config = config["alignment_quality"]
+    margin = int(quality_config["checkbox_frame_margin_px"])
+    search = int(quality_config["checkbox_frame_search_px"])
+    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    scan_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
+    primary_options = config["performance"]["options"] + config["age"]["options"]
+    scores, shifts = _checkbox_frame_scores(
+        scan_gray,
+        template_gray,
+        primary_options,
+        margin=margin,
+        search=search,
+    )
+    supplemental_options = (
+        config["trigger"]["options"]
+        + config["media"]["options"]
+        + config["reservation"]["options"]
+    )
+    supplemental_scores, _ = _checkbox_frame_scores(
+        scan_gray,
+        template_gray,
+        supplemental_options,
+        margin=margin,
+        search=search,
+    )
 
     median_shift = np.median(np.asarray(shifts), axis=0) if shifts else np.array([999.0, 999.0])
     mean_score = float(np.mean(scores)) if scores else -1.0
     min_score = float(np.min(scores)) if scores else -1.0
+    expanded_scores = scores + supplemental_scores
+    expanded_mean_score = float(np.mean(expanded_scores)) if expanded_scores else -1.0
+    expanded_min_score = float(np.min(expanded_scores)) if expanded_scores else -1.0
     passed = (
         mean_score >= quality_config["minimum_mean_score"]
         and min_score >= quality_config["minimum_min_score"]
@@ -367,6 +607,12 @@ def _checkbox_frame_quality(
         "checkboxFrameMedianShiftX": round(float(median_shift[0]), 2),
         "checkboxFrameMedianShiftY": round(float(median_shift[1]), 2),
         "checkboxFrameQualityPassed": passed,
+        # These full-form scores are supplemental diagnostics and deliberately
+        # do not replace the established acceptance gate.  A marked checkbox
+        # can lower one local score even when the form is correctly aligned.
+        "checkboxFrameExpandedMeanScore": round(expanded_mean_score, 4),
+        "checkboxFrameExpandedMinScore": round(expanded_min_score, 4),
+        "checkboxFrameExpandedAnchorCount": len(expanded_scores),
     }
 
 
@@ -376,8 +622,17 @@ def correct_document_with_diagnostics(
     """Correct a document and expose only non-PII geometric quality metrics."""
     config = load_template_config()
     template = load_template_image()
-    corners = find_document_corners(image, config)
     paper_diagnostics = _paper_contour_diagnostics(image, config)
+    try:
+        corners = find_document_corners(image, config)
+    except DocumentDetectionError as error:
+        # `find_document_corners` predates diagnostics.  Preserve its safe
+        # error while attaching only geometric metadata for local validation.
+        raise DocumentDetectionError(
+            str(error),
+            code=error.code,
+            diagnostics={**paper_diagnostics, **error.diagnostics},
+        ) from error
     image_height, image_width = image.shape[:2]
     full_image_corners = _order_corners(
         np.array(
