@@ -39,6 +39,11 @@ class DocumentDetectionError(ScanError):
 class CheckboxMeasurement:
     value: str
     ink_ratio: float
+    # Largest connected added-ink component inside the border-excluded ROI.
+    # ``None`` keeps compatibility with synthetic/unit measurements.
+    ink_component_area: int | None = None
+    ink_component_width: int | None = None
+    ink_component_height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -756,15 +761,51 @@ def measure_checkboxes(
             exposure_shift = 0.0
         normalized_scan = np.clip(inner_scan.astype(np.float32) + exposure_shift, 0, 255)
         added_ink = inner_template.astype(np.float32) - normalized_scan
-        ink_ratio = float(np.mean(added_ink >= darkness))
-        readings.append(CheckboxMeasurement(str(option["value"]), ink_ratio))
+        added_mask = (added_ink >= darkness).astype(np.uint8)
+        ink_ratio = float(np.mean(added_mask > 0))
+        component_area = 0
+        component_width = component_height = 0
+        if np.any(added_mask):
+            component_count, _, stats, _ = cv2.connectedComponentsWithStats(
+                added_mask, connectivity=8
+            )
+            if component_count > 1:
+                component_index = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+                component_area = int(stats[component_index, cv2.CC_STAT_AREA])
+                component_width = int(stats[component_index, cv2.CC_STAT_WIDTH])
+                component_height = int(stats[component_index, cv2.CC_STAT_HEIGHT])
+        readings.append(
+            CheckboxMeasurement(
+                str(option["value"]), ink_ratio, component_area,
+                component_width, component_height
+            )
+        )
     return readings
+
+
+def _is_confirmed(reading: CheckboxMeasurement, checkbox_config: dict) -> bool:
+    """Require both ink amount and a connected mark for real image readings."""
+    if reading.ink_ratio < float(checkbox_config["confirmed_ink_ratio"]):
+        return False
+    minimum_component = int(checkbox_config.get("minimum_confirmed_component_px", 0))
+    if reading.ink_component_area is None:
+        return True
+    if reading.ink_component_area < minimum_component:
+        return False
+    # One-pixel strips are normally printed-frame leakage from a small
+    # registration error, not a handwritten mark.
+    if checkbox_config.get("require_component_shape", False):
+        if reading.ink_component_width is not None and reading.ink_component_width < 2:
+            return False
+        if reading.ink_component_height is not None and reading.ink_component_height < 2:
+            return False
+    return True
 
 
 def result_for_single_select(readings: list[CheckboxMeasurement], checkbox_config: dict) -> FieldResult:
     possible_threshold = float(checkbox_config["checked_ink_ratio"])
     confirmed_threshold = float(checkbox_config["confirmed_ink_ratio"])
-    selected = [reading for reading in readings if reading.ink_ratio >= confirmed_threshold]
+    selected = [reading for reading in readings if _is_confirmed(reading, checkbox_config)]
     possible = [
         reading
         for reading in readings
@@ -794,7 +835,7 @@ def result_for_single_select(readings: list[CheckboxMeasurement], checkbox_confi
         )
     if possible:
         return FieldResult(
-            value=possible[0].value if len(possible) == 1 else "",
+            value="" if checkbox_config.get("suppress_ambiguous_value", False) else possible[0].value,
             confidence=0,
             needsReview=True,
             candidates=[reading.value for reading in possible],
@@ -809,7 +850,7 @@ def result_for_multiple_select(
     """Return all checked choices; ambiguity applies only near the threshold."""
     possible_threshold = float(checkbox_config["checked_ink_ratio"])
     confirmed_threshold = float(checkbox_config["confirmed_ink_ratio"])
-    selected = [reading for reading in readings if reading.ink_ratio >= confirmed_threshold]
+    selected = [reading for reading in readings if _is_confirmed(reading, checkbox_config)]
     possible = [
         reading
         for reading in readings
@@ -819,7 +860,11 @@ def result_for_multiple_select(
     if not selected:
         if possible:
             return FieldResult(
-                value=", ".join(reading.value for reading in possible),
+                value=(
+                    ""
+                    if checkbox_config.get("suppress_ambiguous_value", False)
+                    else ", ".join(reading.value for reading in possible)
+                ),
                 confidence=0,
                 needsReview=True,
                 candidates=[reading.value for reading in possible],
@@ -836,12 +881,20 @@ def result_for_multiple_select(
             ),
         ),
     )
+    if possible:
+        return FieldResult(
+            value="" if checkbox_config.get("suppress_ambiguous_value", False) else ", ".join(candidates),
+            confidence=confidence,
+            needsReview=True,
+            candidates=candidates,
+            status="uncertain",
+        )
     return FieldResult(
         value=", ".join(candidates),
         confidence=confidence,
-        needsReview=bool(possible),
+        needsReview=False,
         candidates=candidates,
-        status="uncertain" if possible else "selected",
+        status="selected",
     )
 
 
@@ -917,27 +970,33 @@ def _scan_aligned_front(aligned_image: np.ndarray) -> ScanFields:
     config = load_template_config()
     template = load_template_image()
     checkbox_config = config["checkbox"]
+    legacy_checkbox_config = {**checkbox_config, "minimum_confirmed_component_px": 0}
+    strict_checkbox_config = {
+        **checkbox_config,
+        "require_component_shape": True,
+        "suppress_ambiguous_value": True,
+    }
     performance = result_for_single_select(
         measure_checkboxes(
-            aligned_image, template, config["performance"]["options"], checkbox_config
+            aligned_image, template, config["performance"]["options"], legacy_checkbox_config
         ),
-        checkbox_config,
+        legacy_checkbox_config,
     )
     age = result_for_single_select(
-        measure_checkboxes(aligned_image, template, config["age"]["options"], checkbox_config),
-        checkbox_config,
+        measure_checkboxes(aligned_image, template, config["age"]["options"], legacy_checkbox_config),
+        legacy_checkbox_config,
     )
     trigger = result_for_multiple_select(
-        measure_checkboxes(aligned_image, template, config["trigger"]["options"], checkbox_config),
-        checkbox_config,
+        measure_checkboxes(aligned_image, template, config["trigger"]["options"], strict_checkbox_config),
+        strict_checkbox_config,
     )
     media = result_for_multiple_select(
-        measure_checkboxes(aligned_image, template, config["media"]["options"], checkbox_config),
-        checkbox_config,
+        measure_checkboxes(aligned_image, template, config["media"]["options"], strict_checkbox_config),
+        strict_checkbox_config,
     )
     reservation = result_for_single_select(
-        measure_checkboxes(aligned_image, template, config["reservation"]["options"], checkbox_config),
-        checkbox_config,
+        measure_checkboxes(aligned_image, template, config["reservation"]["options"], strict_checkbox_config),
+        strict_checkbox_config,
     )
     return ScanFields(
         performance=performance,

@@ -1,8 +1,18 @@
 # STEPS Survey Scanner
 
-Phase 1〜6、8を含むアンケート読取・確認画面と、Phase 7のGoogle Sheets登録準備を実装しています。ブラウザからJPEG/PNGを1枚処理し、確認・修正した11項目だけをBackend経由で1行追加できます。
+Phase 1〜6、8を含むアンケート読取・確認画面と、確認済みデータのコピー支援を実装しています。ブラウザからJPEG/PNGを1枚処理し、確認・修正した11項目を個別にコピーして既存Googleフォームへ手動転記できます。
 
-登録はユーザーが内容を確認して明示的に操作した場合だけ行います。アップロード画像、crop画像、OCR本文、登録データはローカルへ永続保存しません。
+Googleフォームへの自動入力・自動送信は行いません。最終送信は人間がGoogleフォーム上で行います。アップロード画像、crop画像、OCR本文、コピー内容は永続保存しません。
+
+## 通常の利用フロー
+
+1. アプリでアンケート画像を読み込む
+2. 認識結果を確認・修正する
+3. 必要な項目の「コピー」を押す
+4. 「Googleフォームを開く」で既存フォームを別タブに開く
+5. Googleフォームへ貼り付け・選択する
+6. Googleフォームで人間が送信する
+7. アプリへ戻り「次のアンケートを読み取る」を押す
 
 ## 起動
 
@@ -64,13 +74,13 @@ $env:RUN_VISION_INTEGRATION = "1"
 .venv\Scripts\python.exe -m pytest -m integration backend\tests\integration -q
 ```
 
-## Phase 7: Google Sheets登録
+## Google Sheets（現在の通常運用では使用しない）
 
-Google Sheets登録はBackendだけが行います。FrontendへSpreadsheet IDやGoogle認証情報を設定しないでください。
+既存のGoogle Sheets provider・API・テストは将来の開発用として残っていますが、通常のユーザー操作フローからは呼び出しません。Google Sheets認証は現在の正式運用には不要です。
 
 認証未設定時の既定値は `SHEETS_ENABLED=false` で、登録APIは `sheets_unavailable` を返し、成功表示や代替ファイル保存は行いません。
 
-設定例（Backendプロセスの環境変数）:
+（参考）将来Sheets運用へ戻す場合の設定例（通常運用では不要）:
 
 ```powershell
 $env:SHEETS_ENABLED = "true"

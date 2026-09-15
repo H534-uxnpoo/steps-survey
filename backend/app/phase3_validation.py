@@ -12,7 +12,8 @@ from .models import ScanFields
 from .template import load_template_config
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
-FIELD_NAMES = ("performance", "age")
+FIELD_NAMES = ("performance", "age", "trigger", "media", "reservation")
+MULTI_SELECT_FIELDS = {"trigger", "media"}
 
 
 class LabelFormatError(ValueError):
@@ -38,7 +39,7 @@ def _valid_choices() -> dict[str, set[str]]:
 
 def load_private_labels(
     label_path: Path,
-) -> dict[str, dict[str, str | None]] | None:
+) -> dict[str, dict[str, Any]] | None:
     """Load filename-keyed labels from an ignored local file, if it exists."""
     if not label_path.exists():
         return None
@@ -57,10 +58,23 @@ def load_private_labels(
             raise LabelFormatError("正解ラベルの画像ファイル名が不正です。")
         if not isinstance(sample, dict):
             raise LabelFormatError("正解ラベルの形式が不正です。")
-        expected: dict[str, str | None] = {}
+        expected: dict[str, Any] = {}
         for field in FIELD_NAMES:
+            if field not in sample:
+                continue
             value = sample.get(field)
-            if value is not None and (not isinstance(value, str) or value not in valid_choices[field]):
+            if field in MULTI_SELECT_FIELDS:
+                if value is not None:
+                    if isinstance(value, str):
+                        values = [part.strip() for part in value.split(",") if part.strip()]
+                    elif isinstance(value, list) and all(isinstance(part, str) for part in value):
+                        values = value
+                    else:
+                        raise LabelFormatError("正解ラベルの複数選択形式が不正です。")
+                    if any(part not in valid_choices[field] for part in values):
+                        raise LabelFormatError("正解ラベルに未定義の選択肢があります。")
+                    value = values
+            elif value is not None and (not isinstance(value, str) or value not in valid_choices[field]):
                 raise LabelFormatError("正解ラベルに未定義の選択肢があります。")
             expected[field] = value
         normalized[filename] = expected
@@ -68,7 +82,15 @@ def load_private_labels(
 
 
 def _empty_field_summary() -> dict[str, int | float | None]:
-    return {"labeled": 0, "correct": 0, "needsReview": 0, "accuracy": None}
+    return {
+        "labeled": 0,
+        "correct": 0,
+        "incorrect": 0,
+        "confirmedCorrect": 0,
+        "confirmedIncorrect": 0,
+        "needsReview": 0,
+        "accuracy": None,
+    }
 
 
 def _finish_field_summary(summary: dict[str, int | float | None]) -> None:
@@ -78,7 +100,7 @@ def _finish_field_summary(summary: dict[str, int | float | None]) -> None:
 
 def build_validation_report(
     image_paths: Sequence[Path],
-    expected_labels: Mapping[str, dict[str, str | None]] | None,
+    expected_labels: Mapping[str, dict[str, Any]] | None,
     scanner: Callable[
         [bytes], ScanFields | tuple[ScanFields, dict[str, float | int | str | bool]]
     ] = scan_front_with_diagnostics,
@@ -117,7 +139,7 @@ def build_validation_report(
         for field in FIELD_NAMES:
             field_case: dict[str, Any] = {"needsReview": True, "outcome": "not_evaluated"}
             summary = summaries[field]
-            expected_value = expected[field] if expected is not None else None
+            expected_value = expected.get(field) if expected is not None else None
             if expected_value is not None:
                 summary["labeled"] = int(summary["labeled"]) + 1
 
@@ -126,11 +148,35 @@ def build_validation_report(
                 field_case["needsReview"] = result.needsReview
                 if expected_value is None:
                     field_case["outcome"] = "unlabeled"
+                elif field in MULTI_SELECT_FIELDS:
+                    actual_values = set(result.candidates)
+                    expected_values = set(expected_value)
+                    matches = actual_values == expected_values
+                    if matches:
+                        summary["correct"] = int(summary["correct"]) + 1
+                    if result.needsReview:
+                        field_case["outcome"] = "needsReview"
+                    elif matches:
+                        summary["confirmedCorrect"] = int(summary["confirmedCorrect"]) + 1
+                        field_case["outcome"] = "confirmedCorrect"
+                    else:
+                        summary["incorrect"] = int(summary["incorrect"]) + 1
+                        summary["confirmedIncorrect"] = int(summary["confirmedIncorrect"]) + 1
+                        field_case["outcome"] = "confirmedIncorrect"
                 elif result.value == expected_value:
                     summary["correct"] = int(summary["correct"]) + 1
-                    field_case["outcome"] = "correct"
+                    if result.needsReview:
+                        field_case["outcome"] = "needsReview"
+                    else:
+                        summary["confirmedCorrect"] = int(summary["confirmedCorrect"]) + 1
+                        field_case["outcome"] = "confirmedCorrect"
                 else:
-                    field_case["outcome"] = "incorrect"
+                    summary["incorrect"] = int(summary["incorrect"]) + 1
+                    if result.needsReview:
+                        field_case["outcome"] = "needsReview"
+                    else:
+                        summary["confirmedIncorrect"] = int(summary["confirmedIncorrect"]) + 1
+                        field_case["outcome"] = "confirmedIncorrect"
 
             if field_case["needsReview"]:
                 summary["needsReview"] = int(summary["needsReview"]) + 1

@@ -32,10 +32,9 @@ type ScanResult = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const GOOGLE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc8AtlzMoZDjXv-ftXRNA58LvFD58_6zvNPoM4zL_C9L37tcA/viewform";
 
 type FieldKey = keyof ScanResult["fields"];
-
-type SubmissionFields = Record<FieldKey, string>;
 
 type FieldDefinition = {
   key: FieldKey;
@@ -57,52 +56,28 @@ const fieldDefinitions: FieldDefinition[] = [
   { key: "email", label: "メアド" },
 ];
 
-function responseErrorCode(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
-
-  const response = body as Record<string, unknown>;
-  if (typeof response.code === "string") return response.code;
-
-  if (response.detail && typeof response.detail === "object") {
-    const detail = response.detail as Record<string, unknown>;
-    if (typeof detail.code === "string") return detail.code;
-  }
-
-  return typeof response.detail === "string" ? response.detail : null;
-}
-
-function submissionErrorFor(body: unknown): string {
-  switch (responseErrorCode(body)) {
-    case "sheets_unavailable":
-      return "Google Sheetsへの保存設定がまだ完了していません。";
-    case "sheet_header_mismatch":
-      return "スプレッドシートのヘッダーを確認できませんでした。登録は行っていません。";
-    case "sheets_authentication_failed":
-    case "sheets_auth_unavailable":
-      return "Google Sheetsへの認証設定を確認してください。登録は行っていません。";
-    case "submission_validation_error":
-    case "validation_error":
-      return "入力内容を確認してください。登録は行っていません。";
-    default:
-      return "Google Sheetsへ登録できませんでした。内容はこの画面に保持されています。時間をおいて再度お試しください。";
-  }
-}
-
 function EditableResultItem({
   definition,
   field,
   value,
   onChange,
+  copyMessage,
+  onCopy,
 }: {
   definition: FieldDefinition;
   field: FieldResult;
   value: string;
   onChange: (value: string) => void;
+  copyMessage?: string;
+  onCopy: () => void;
 }) {
   const inputId = `field-${definition.key}`;
   return (
     <div className={field.needsReview ? "edit-field review" : "edit-field"}>
-      <label htmlFor={inputId}>{definition.label}</label>
+      <div className="field-heading">
+        <label htmlFor={inputId}>{definition.label}</label>
+        <button type="button" className="copy-button" onClick={onCopy}>コピー</button>
+      </div>
       {definition.multiline ? (
         <textarea id={inputId} value={value} onChange={(event) => onChange(event.target.value)} />
       ) : (
@@ -111,6 +86,7 @@ function EditableResultItem({
       {field.status === "unavailable" && <p className="field-hint">OCRを実行できませんでした。原本を見て入力してください。</p>}
       {field.detailNeedsReview && <p className="field-hint">選択肢は読み取れましたが、付随する自由記述は要確認です。</p>}
       {field.needsReview && <p>要確認</p>}
+      {copyMessage && <p className={copyMessage === "コピーしました" ? "copy-success" : "copy-error"}>{copyMessage}</p>}
     </div>
   );
 }
@@ -125,10 +101,7 @@ export default function Home() {
   const [editedValues, setEditedValues] = useState<Partial<Record<FieldKey, string>>>({});
   const [cameraOpen, setCameraOpen] = useState(false);
   const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
-  const [hasConfirmedSubmission, setHasConfirmedSubmission] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submissionSucceeded, setSubmissionSucceeded] = useState(false);
-  const [submissionError, setSubmissionError] = useState("");
+  const [copyMessages, setCopyMessages] = useState<Partial<Record<FieldKey, string>>>({});
 
   function stopCamera() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -165,10 +138,7 @@ export default function Home() {
     setEditedValues({});
     setPreview(null);
     setErrorMessage("");
-    setHasConfirmedSubmission(false);
-    setIsSubmitting(false);
-    setSubmissionSucceeded(false);
-    setSubmissionError("");
+    setCopyMessages({});
     if (inputRef.current) inputRef.current.value = "";
   }
 
@@ -219,10 +189,7 @@ export default function Home() {
     setErrorMessage("");
     setResult(null);
     setEditedValues({});
-    setHasConfirmedSubmission(false);
-    setIsSubmitting(false);
-    setSubmissionSucceeded(false);
-    setSubmissionError("");
+    setCopyMessages({});
     const formData = new FormData();
     formData.append("image", file);
 
@@ -256,34 +223,14 @@ export default function Home() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  async function submitConfirmedValues() {
-    if (!result || !hasConfirmedSubmission || isSubmitting || submissionSucceeded) return;
-
-    const fields = Object.fromEntries(
-      fieldDefinitions.map(({ key }) => [key, editedValues[key] ?? ""])
-    ) as SubmissionFields;
-
-    setIsSubmitting(true);
-    setSubmissionError("");
-
+  async function copyField(key: FieldKey) {
+    const value = editedValues[key] ?? "";
     try {
-      const response = await fetch(`${API_BASE_URL}/api/submissions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-      });
-      const body = await response.json().catch(() => null);
-
-      if (!response.ok || body?.success !== true) {
-        setSubmissionError(submissionErrorFor(body));
-        return;
-      }
-
-      setSubmissionSucceeded(true);
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(value);
+      setCopyMessages((current) => ({ ...current, [key]: "コピーしました" }));
     } catch {
-      setSubmissionError("サーバーに接続できません。内容はこの画面に保持されています。接続を確認して再度お試しください。");
-    } finally {
-      setIsSubmitting(false);
+      setCopyMessages((current) => ({ ...current, [key]: "コピーできませんでした。入力内容は保持されています。" }));
     }
   }
 
@@ -332,14 +279,7 @@ export default function Home() {
 
       {result && (
         <section className="card results" aria-live="polite">
-          {submissionSucceeded ? (
-            <div className="submission-success">
-              <h2>登録しました</h2>
-              <p>Google Sheetsへ1件を登録しました。</p>
-              <button type="button" onClick={resetForNextSurvey}>次のアンケートを読み取る</button>
-            </div>
-          ) : (
-            <>
+          <>
               <h2>確認・修正</h2>
               {result.needsReview && <p className="review-summary">要確認の項目を先頭に表示しています。原本を見て修正してください。</p>}
               <div className="edit-list">
@@ -351,36 +291,21 @@ export default function Home() {
                       definition={definition}
                       field={result.fields[definition.key]}
                       value={editedValues[definition.key] ?? ""}
+                      copyMessage={copyMessages[definition.key]}
+                      onCopy={() => void copyField(definition.key)}
                       onChange={(value) => {
                         setEditedValues((current) => ({ ...current, [definition.key]: value }));
-                        setHasConfirmedSubmission(false);
-                        setSubmissionError("");
+                        setCopyMessages((current) => ({ ...current, [definition.key]: "" }));
                       }}
                     />
                   ))}
               </div>
-              <p className="local-only">修正内容はこの画面内でのみ保持されます。内容を確認してから、下の操作でGoogle Sheetsへ登録してください。</p>
-              {result.needsReview && <p className="review-summary">要確認の項目が残っています。原本を確認したうえで登録してください。</p>}
-              <label className="submission-confirmation">
-                <input
-                  type="checkbox"
-                  checked={hasConfirmedSubmission}
-                  disabled={isSubmitting}
-                  onChange={(event) => setHasConfirmedSubmission(event.target.checked)}
-                />
-                内容を確認しました
-              </label>
-              <p className="submission-hint">確認後にのみ登録できます。登録されるのは、この画面で編集した11項目です。</p>
-              {submissionError && <p className="error" role="alert">{submissionError}</p>}
-              <button
-                type="button"
-                onClick={() => void submitConfirmedValues()}
-                disabled={!hasConfirmedSubmission || isSubmitting}
-              >
-                {isSubmitting ? "登録中…" : "スプレッドシートに登録"}
-              </button>
-            </>
-          )}
+              <p className="local-only">修正内容はこの画面内でのみ保持されます。必要な項目をコピーして、Googleフォームへ手動で転記してください。</p>
+              <div className="form-actions">
+                <a className="form-link" href={GOOGLE_FORM_URL} target="_blank" rel="noopener noreferrer">Googleフォームを開く</a>
+                <button type="button" className="secondary-button" onClick={resetForNextSurvey}>次のアンケートを読み取る</button>
+              </div>
+          </>
         </section>
       )}
     </main>

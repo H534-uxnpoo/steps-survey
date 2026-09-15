@@ -22,12 +22,18 @@ h2 { font-size: 1.25rem; }
 .edit-list { display: grid; gap: 12px; margin: 18px 0; }
 .edit-field { padding: 4px 0; }
 .edit-field.review { padding: 14px 12px; border-radius: 8px; background: #fff8e8; }
+.field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .edit-field label { display: block; color: #52635a; font-weight: 700; }
+.copy-button { min-height: 38px; padding: 7px 13px; border: 1px solid #156b45; background: #fff; color: #156b45; font-size: .9rem; }
 .edit-field input, .edit-field textarea { width: 100%; margin-top: 8px; padding: 10px; border: 1px solid #b9c6be; border-radius: 8px; color: #172026; background: #fff; font: inherit; line-height: 1.55; }
 .edit-field textarea { min-height: 96px; resize: vertical; }
 .edit-field p { margin: 8px 0 0; color: #9a5900; font-size: .9rem; font-weight: 700; }
 .edit-field .field-hint { color: #59645e; font-weight: 400; }
+.edit-field .copy-success { color: #156b45; }
+.edit-field .copy-error { color: #a71e26; }
 .local-only { margin: 18px 0; color: #59645e; font-size: .9rem; line-height: 1.5; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.form-link { display: inline-flex; min-height: 52px; align-items: center; justify-content: center; padding: 12px 22px; border-radius: 10px; background: #156b45; color: #fff; font-weight: 700; text-decoration: none; }
 .submission-confirmation { display: flex; gap: 10px; align-items: center; margin: 18px 0 0; padding: 14px 12px; border: 1px solid #b9c6be; border-radius: 8px; color: #172026; font-weight: 700; }
 .submission-confirmation input { width: 20px; height: 20px; accent-color: #156b45; }
 .submission-hint { margin: 10px 0 16px; color: #59645e; font-size: .9rem; line-height: 1.5; }

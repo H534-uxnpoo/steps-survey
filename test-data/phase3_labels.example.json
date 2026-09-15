@@ -1,10 +1,72 @@
 {
-  "sample-001.jpg": {
-    "performance": "12日(土)12:30-",
-    "age": "20代"
-  },
-  "sample-002.jpg": {
+  "sample-01.jpg": {
     "performance": "12日(土)17:30-",
-    "age": "30代"
+    "age": "50代",
+    "trigger": ["その他"],
+    "media": ["その他"],
+    "reservation": "できた"
+  },
+  "sample-02.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "20代",
+    "trigger": ["関係者の誘い"],
+    "media": [],
+    "reservation": "できた"
+  },
+  "sample-03.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "10代以下",
+    "trigger": ["関係者の誘い"],
+    "media": ["公演チラシ"],
+    "reservation": "できた"
+  },
+  "sample-04.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "20代",
+    "trigger": ["関係者の誘い", "慶應生"],
+    "media": [],
+    "reservation": "できた"
+  },
+  "sample-05.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "10代以下",
+    "trigger": ["関係者の誘い", "劇協"],
+    "media": ["その他"],
+    "reservation": "その他"
+  },
+  "sample-06.jpg": {
+    "performance": "",
+    "age": "20代",
+    "trigger": ["STEPSのOG・OB"],
+    "media": [],
+    "reservation": "できた"
+  },
+  "sample-07.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "10代以下",
+    "trigger": ["関係者の誘い", "劇協"]
+    "media": ["Instagram", "PV", "公演チラシ"],
+    "reservation": "できた"
+  },
+  "sample-08.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "20代",
+    "trigger": ["STEPSのOG・OB"],
+    "media": ["Instagram", "DM", "公演チラシ"],
+    "reservation": "できた"
+  },
+  "sample-09.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "10代以下",
+    "trigger": ["関係者の誘い", "劇協"],
+    "media": ["Instagram"],
+    "reservation": "できた"
+  },
+  "s.jpg": {
+    "performance": "12日(土)17:30-",
+    "age": "10代以下",
+    "trigger": ["関係者の誘い", "慶應生"],
+    "media": [],
+    "reservation": "できた"
   }
 }

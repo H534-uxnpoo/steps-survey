@@ -106,7 +106,11 @@ def test_phase_five_ocr_fallback_keeps_checkbox_results_and_marks_text_for_revie
 
 
 def test_checkbox_reader_keeps_weak_ink_out_of_confirmed_multi_select():
-    checkbox_config = {"checked_ink_ratio": 0.02, "confirmed_ink_ratio": 0.06}
+    checkbox_config = {
+        "checked_ink_ratio": 0.02,
+        "confirmed_ink_ratio": 0.06,
+        "suppress_ambiguous_value": True,
+    }
     readings = [
         CheckboxMeasurement("CONFIRMED", 0.30),
         CheckboxMeasurement("WEAK", 0.028),
@@ -118,13 +122,26 @@ def test_checkbox_reader_keeps_weak_ink_out_of_confirmed_multi_select():
         [CheckboxMeasurement("WEAK", 0.028), CheckboxMeasurement("EMPTY", 0)], checkbox_config
     )
 
-    assert multiple.value == "CONFIRMED"
+    assert multiple.value == ""
     assert multiple.candidates == ["CONFIRMED"]
     assert multiple.needsReview is True
     assert multiple.status == "uncertain"
-    assert single.value == "WEAK"
+    assert single.value == ""
     assert single.status == "uncertain"
     assert single.needsReview is True
+
+
+def test_checkbox_reader_rejects_frame_like_component_even_above_ratio():
+    checkbox_config = {
+        "checked_ink_ratio": 0.02,
+        "confirmed_ink_ratio": 0.06,
+        "minimum_confirmed_component_px": 3,
+        "require_component_shape": True,
+    }
+    reading = CheckboxMeasurement("FRAME_LEAK", 0.30, 12, 1, 6)
+    result = result_for_multiple_select([reading], checkbox_config)
+    assert result.value == ""
+    assert result.needsReview is True
 
 
 def test_selected_option_remains_confirmed_when_only_its_detail_ocr_is_unavailable():

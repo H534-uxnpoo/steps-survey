@@ -40,6 +40,7 @@
     "inner_inset_px": 5,
     "checked_ink_ratio": 0.02,
     "confirmed_ink_ratio": 0.06,
+    "minimum_confirmed_component_px": 3,
     "added_ink_darkness": 24
   },
   "message": {
