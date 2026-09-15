@@ -19,6 +19,12 @@ class FakeMessageOcrClient:
         return OcrResult(text="DUMMY MESSAGE", confidence=0.95)
 
 
+class FakeBackOcrClient:
+    def recognize(self, image_bytes: bytes) -> OcrResult:
+        assert image_bytes
+        return OcrResult(text="DUMMY BACK", confidence=0.95)
+
+
 def test_scan_endpoint_returns_phase_five_fields(monkeypatch):
     fake_client = FakeMessageOcrClient()
     monkeypatch.setattr("app.main.get_message_ocr_client", lambda: fake_client)
@@ -74,3 +80,32 @@ def test_scan_endpoint_returns_recapture_guidance_for_unusable_document():
 
     assert response.status_code == 422
     assert "アンケート全体" in response.json()["detail"]
+
+
+def test_back_scan_endpoint_uses_free_form_ocr_without_template_alignment(monkeypatch):
+    monkeypatch.setattr("app.main.get_message_ocr_client", lambda: FakeBackOcrClient())
+    image = np.zeros((40, 60, 3), dtype=np.uint8)
+    success, encoded = cv2.imencode(".png", image)
+    assert success
+    response = client.post(
+        "/api/scan/back",
+        files={"image": ("back.png", encoded.tobytes(), "image/png")},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["message"]["value"] == "DUMMY BACK"
+    assert body["message"]["needsReview"] is False
+
+
+def test_back_scan_without_ocr_returns_reviewable_result(monkeypatch):
+    monkeypatch.setattr("app.main.get_message_ocr_client", lambda: None)
+    image = np.zeros((40, 60, 3), dtype=np.uint8)
+    success, encoded = cv2.imencode(".png", image)
+    assert success
+    response = client.post(
+        "/api/scan/back",
+        files={"image": ("back.png", encoded.tobytes(), "image/png")},
+    )
+    assert response.status_code == 200
+    assert response.json()["message"]["status"] == "unavailable"
+    assert response.json()["needsReview"] is True

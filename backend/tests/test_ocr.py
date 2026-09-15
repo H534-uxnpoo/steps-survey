@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from app.ocr import OcrError, OcrResult, encode_message_crop, recognize_message
+from app.ocr import OcrError, OcrResult, encode_message_crop, recognize_back_image, recognize_message
 from app.template import load_template_config, load_template_image
 
 
@@ -71,3 +71,24 @@ def test_message_crop_rejects_out_of_bounds_roi():
         assert str(error) == "ocr_roi_invalid"
     else:
         raise AssertionError("invalid ROI must not be cropped")
+
+
+def test_back_ocr_uses_full_image_and_keeps_fake_text_verbatim():
+    image = np.zeros((40, 60, 3), dtype=np.uint8)
+    success, encoded = cv2.imencode(".png", image)
+    assert success
+    client = CapturingOcrClient(OcrResult(text="DUMMY BACK", confidence=0.95))
+    result = recognize_back_image(encoded.tobytes(), client)
+    sent = cv2.imdecode(np.frombuffer(client.request, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert sent.shape[:2] == image.shape[:2]
+    assert result.value == "DUMMY BACK"
+    assert result.needsReview is False
+
+
+def test_back_ocr_unavailable_or_low_confidence_requires_review():
+    unavailable = recognize_back_image(b"ignored", None)
+    uncertain = recognize_back_image(b"ignored", CapturingOcrClient(OcrResult("DUMMY", 0.2)))
+    assert unavailable.status == "unavailable"
+    assert unavailable.needsReview is True
+    assert uncertain.value == "DUMMY"
+    assert uncertain.needsReview is True

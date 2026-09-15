@@ -10,8 +10,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .image_processing import DocumentDetectionError, ScanError, scan_front_with_message
-from .models import ScanResponse, SubmissionRequest, SubmissionResponse
-from .ocr import get_message_ocr_client
+from .models import BackScanResponse, ScanResponse, SubmissionRequest, SubmissionResponse
+from .ocr import get_message_ocr_client, recognize_back_image
 from .sheets import SheetsError, get_sheets_provider_from_env
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
@@ -82,6 +82,22 @@ async def scan_front_image(image: UploadFile = File(...)) -> ScanResponse:
             )
         ),
     )
+
+
+@app.post("/api/scan/back", response_model=BackScanResponse)
+async def scan_back_image(image: UploadFile = File(...)) -> BackScanResponse:
+    """Read a back-side free-form image without fixed-form correction."""
+    if image.content_type not in ALLOWED_MEDIA_TYPES:
+        await image.close()
+        raise HTTPException(status_code=415, detail="JPEGまたはPNG形式の画像を選択してください。")
+    try:
+        image_bytes = await image.read(MAX_UPLOAD_BYTES + 1)
+    finally:
+        await image.close()
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="画像ファイルは12MB以下にしてください。")
+    message = recognize_back_image(image_bytes, get_message_ocr_client())
+    return BackScanResponse(message=message, needsReview=message.needsReview)
 
 
 @app.post("/api/submissions", response_model=SubmissionResponse)

@@ -31,6 +31,8 @@ type ScanResult = {
   needsReview: boolean;
 };
 
+type BackScanResponse = { message: FieldResult; needsReview: boolean };
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const GOOGLE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc8AtlzMoZDjXv-ftXRNA58LvFD58_6zvNPoM4zL_C9L37tcA/viewform";
 
@@ -101,6 +103,11 @@ export default function Home() {
   const [editedValues, setEditedValues] = useState<Partial<Record<FieldKey, string>>>({});
   const [cameraOpen, setCameraOpen] = useState(false);
   const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
+  const [backPreview, setBackPreview] = useState<{ file: File; url: string } | null>(null);
+  const [backChoice, setBackChoice] = useState<"pending" | "none" | "selecting" | "done">("pending");
+  const [cameraTarget, setCameraTarget] = useState<"front" | "back">("front");
+  const [inputPurpose, setInputPurpose] = useState<"front" | "back">("front");
+  const [backError, setBackError] = useState("");
   const [copyMessages, setCopyMessages] = useState<Partial<Record<FieldKey, string>>>({});
 
   function stopCamera() {
@@ -137,12 +144,16 @@ export default function Home() {
     setResult(null);
     setEditedValues({});
     setPreview(null);
+    setBackPreview(null);
+    setBackChoice("pending");
+    setBackError("");
+    setInputPurpose("front");
     setErrorMessage("");
     setCopyMessages({});
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  async function startCamera() {
+  async function startCamera(target: "front" | "back" = "front") {
     if (!navigator.mediaDevices?.getUserMedia) {
       setErrorMessage("このブラウザではカメラを利用できません。写真から選択してください。");
       return;
@@ -153,6 +164,7 @@ export default function Home() {
         video: { facingMode: { ideal: "environment" } },
       });
       streamRef.current = stream;
+      setCameraTarget(target);
       setErrorMessage("");
       setCameraOpen(true);
     } catch {
@@ -176,7 +188,12 @@ export default function Home() {
         return;
       }
       stopCamera();
-      selectPreview(new File([blob], "survey-camera.jpg", { type: "image/jpeg" }));
+      const file = new File([blob], cameraTarget === "back" ? "survey-back-camera.jpg" : "survey-camera.jpg", { type: "image/jpeg" });
+      if (cameraTarget === "back") {
+        setBackPreview({ file, url: URL.createObjectURL(file) });
+      } else {
+        selectPreview(file);
+      }
     }, "image/jpeg", 0.92);
   }
 
@@ -190,6 +207,7 @@ export default function Home() {
     setResult(null);
     setEditedValues({});
     setCopyMessages({});
+    setBackError("");
     const formData = new FormData();
     formData.append("image", file);
 
@@ -219,8 +237,45 @@ export default function Home() {
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) selectPreview(file);
+    if (file && inputPurpose === "back") {
+      if (["image/jpeg", "image/png"].includes(file.type)) {
+        setBackError("");
+        setBackPreview({ file, url: URL.createObjectURL(file) });
+      } else {
+        setBackError("JPEGまたはPNG形式の画像を選択してください。");
+      }
+    } else if (file) selectPreview(file);
     if (inputRef.current) inputRef.current.value = "";
+  }
+
+  async function uploadBack(file: File) {
+    setIsScanning(true);
+    setBackError("");
+    const formData = new FormData();
+    formData.append("image", file);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/scan/back`, { method: "POST", body: formData });
+      const body = (await response.json().catch(() => null)) as BackScanResponse | null;
+      if (!response.ok || !body) {
+        setBackError("裏面の読み取りに失敗しました。入力内容は保持されています。");
+        return;
+      }
+      const surfaceMessage = editedValues.message ?? "";
+      const backMessage = body.message.value ? `【裏面】\n${body.message.value}` : "【裏面】";
+      const combinedMessage = surfaceMessage ? `${surfaceMessage}\n\n${backMessage}` : backMessage;
+      setEditedValues((current) => ({ ...current, message: combinedMessage }));
+      setResult((current) => current ? {
+        ...current,
+        fields: { ...current.fields, message: { ...body.message, value: combinedMessage, needsReview: body.message.needsReview || !body.message.value } },
+        needsReview: current.needsReview || body.needsReview || !body.message.value,
+      } : current);
+      setBackChoice("done");
+      setBackPreview(null);
+    } catch {
+      setBackError("裏面の読み取りに失敗しました。入力内容は保持されています。");
+    } finally {
+      setIsScanning(false);
+    }
   }
 
   async function copyField(key: FieldKey) {
@@ -275,9 +330,38 @@ export default function Home() {
         )}
         <p className="hint">JPEG・PNG、12MB以下。補正に失敗した場合は、アンケート全体が画面に入るように撮り直してください。画像は保存されません。</p>
         {errorMessage && <p className="error" role="alert">{errorMessage}</p>}
+        {backError && <p className="error" role="alert">{backError}</p>}
       </section>
 
-      {result && (
+      {result && backChoice === "pending" && (
+        <section className="card results">
+          <h2>裏面の確認</h2>
+          <p className="local-only">表面の確認前に、裏面のメッセージを読み取るか選択してください。</p>
+          <div className="form-actions">
+            <button type="button" onClick={() => setBackChoice("selecting")}>裏面も読み取る</button>
+            <button type="button" className="secondary-button" onClick={() => setBackChoice("none")}>裏面なし</button>
+          </div>
+        </section>
+      )}
+
+      {result && backChoice === "selecting" && (
+        <section className="card results">
+          <h2>裏面画像</h2>
+          {!backPreview && !cameraOpen && <div className="source-actions">
+            <button type="button" onClick={() => void startCamera("back")} disabled={isScanning}>カメラを起動</button>
+            <button type="button" className="secondary-button" onClick={() => { setInputPurpose("back"); inputRef.current?.click(); }} disabled={isScanning}>写真から選択</button>
+          </div>}
+          {backPreview && <div className="capture-preview">
+            <img src={backPreview.url} alt="裏面画像のプレビュー" />
+            <div className="source-actions">
+              <button type="button" onClick={() => void uploadBack(backPreview.file)} disabled={isScanning}>{isScanning ? "読み取り中…" : "この画像を使用"}</button>
+              <button type="button" className="secondary-button" onClick={() => setBackPreview(null)} disabled={isScanning}>撮り直す</button>
+            </div>
+          </div>}
+        </section>
+      )}
+
+      {result && (backChoice === "none" || backChoice === "done") && (
         <section className="card results" aria-live="polite">
           <>
               <h2>確認・修正</h2>

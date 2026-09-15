@@ -72,18 +72,40 @@ def get_ocr_client() -> OcrClient | None:
     """Create a client only when OCR was explicitly enabled for this backend."""
     if os.environ.get("VISION_OCR_ENABLED", "").lower() != "true":
         return None
+    try:
+        return GoogleVisionMessageOcrClient()
+    except OcrError:
+        return None
 
 
 def get_message_ocr_client() -> OcrClient | None:
     """Compatibility wrapper for callers added during Phase 4."""
     return get_ocr_client()
+
+
+def recognize_back_image(image_bytes: bytes, client: OcrClient | None) -> FieldResult:
+    """OCR a back-side image as free-form text, without template alignment."""
+    if client is None:
+        return FieldResult(confidence=0, needsReview=True, status="unavailable")
     try:
-        return GoogleVisionMessageOcrClient()
-    except OcrError:
-        # OCR remains a reviewable unavailable field; checkbox results survive.
-        return None
-
-
+        result = client.recognize(image_bytes)
+    except Exception:
+        return FieldResult(confidence=0, needsReview=True, status="unavailable")
+    if not result.text:
+        return FieldResult(confidence=result.confidence, needsReview=True, status="none")
+    if result.confidence < 0.8:
+        return FieldResult(
+            value=result.text,
+            confidence=result.confidence,
+            needsReview=True,
+            status="uncertain",
+        )
+    return FieldResult(
+        value=result.text,
+        confidence=result.confidence,
+        needsReview=False,
+        status="recognized",
+    )
 def encode_field_crop(aligned_image: np.ndarray, field_config: dict) -> bytes:
     """Encode one configured ROI in memory; never encode the whole survey."""
     x, y, width, height = (int(value) for value in field_config["roi"])

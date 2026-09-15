@@ -55,6 +55,13 @@ class ScanResponse(BaseModel):
     needsReview: bool
 
 
+class BackScanResponse(BaseModel):
+    """OCR result for a free-form back-side image."""
+
+    message: FieldResult
+    needsReview: bool
+
+
 class SubmissionRequest(BaseModel):
     """The exact 11 user-confirmed values that become one Sheets row."""
 

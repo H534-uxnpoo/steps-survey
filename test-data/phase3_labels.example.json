@@ -44,7 +44,7 @@
   "sample-07.jpg": {
     "performance": "12日(土)17:30-",
     "age": "10代以下",
-    "trigger": ["関係者の誘い", "劇協"]
+    "trigger": ["関係者の誘い", "劇協"],
     "media": ["Instagram", "PV", "公演チラシ"],
     "reservation": "できた"
   },
